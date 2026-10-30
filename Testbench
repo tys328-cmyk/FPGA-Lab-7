@@ -1,0 +1,198 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 10/23/2026 01:26:16 PM
+// Design Name: 
+// Module Name: tb_top
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+
+module tb_top;
+
+    reg clk = 1'b0;
+    reg btnC = 1'b1;
+
+    wire [6:0] seg;
+    wire [3:0] an;
+    wire dp;
+
+    integer i;
+    integer expected_count;
+    integer errors = 0;
+    reg [15:0] expected_bcd;
+
+    // Speed up both clocks for simulation only.
+    top #(
+        .COUNT_HALF_PERIOD(20),
+        .SCAN_HALF_PERIOD(2)
+    ) DUT (
+        .clk(clk),
+        .btnC(btnC),
+        .seg(seg),
+        .an(an),
+        .dp(dp)
+    );
+
+    // 100 MHz input clock.
+    always #5 clk = ~clk;
+
+    initial begin
+        repeat (5) @(negedge clk);
+        btnC = 1'b0;
+        #1;
+
+        if (DUT.count !== 12'd0) begin
+            $display("ERROR: initial reset failed");
+            errors = errors + 1;
+        end
+
+        // Check all counts, including 4095 -> 0.
+        for (i = 1; i <= 4096; i = i + 1) begin
+            @(posedge DUT.count_clk);
+            #1;
+
+            expected_count = i % 4096;
+
+            expected_bcd[15:12] = expected_count / 1000;
+            expected_bcd[11:8]  = (expected_count / 100) % 10;
+            expected_bcd[7:4]   = (expected_count / 10) % 10;
+            expected_bcd[3:0]   = expected_count % 10;
+
+            if (DUT.count !== expected_count[11:0]) begin
+                $display("ERROR: expected count %0d, got %0d",
+                         expected_count, DUT.count);
+                errors = errors + 1;
+            end
+
+            if (DUT.bcd !== expected_bcd) begin
+                $display("ERROR: count %0d, expected BCD %h, got %h",
+                         expected_count, expected_bcd, DUT.bcd);
+                errors = errors + 1;
+            end
+        end
+
+        // Check reset after counting.
+        repeat (3) @(posedge DUT.count_clk);
+        @(negedge clk);
+        btnC = 1'b1;
+        #1;
+
+        if (DUT.count !== 12'd0 ||
+            DUT.digit_select !== 2'd0 ||
+            DUT.count_clk !== 1'b0 ||
+            DUT.scan_clk !== 1'b0) begin
+            $display("ERROR: second reset failed");
+            errors = errors + 1;
+        end
+
+        repeat (5) @(negedge clk);
+        btnC = 1'b0;
+
+        @(posedge DUT.count_clk);
+        #1;
+
+        if (DUT.count !== 12'd1) begin
+            $display("ERROR: counting did not restart");
+            errors = errors + 1;
+        end
+
+        // Allow the final display checks to finish.
+        @(negedge clk);
+
+        if (errors == 0)
+            $display("PASS: top-module tests completed.");
+        else
+            $display("FAIL: %0d errors.", errors);
+
+        $finish;
+    end
+
+    // Check display outputs after each scan-clock edge.
+    always @(posedge DUT.scan_clk) begin
+        #2;
+
+        case (DUT.digit_select)
+            2'd0: begin
+                if (an !== 4'b1110 ||
+                    DUT.selected_digit !== DUT.bcd[3:0]) begin
+                    $display("ERROR: ones digit selection");
+                    errors = errors + 1;
+                end
+            end
+
+            2'd1: begin
+                if (an !== 4'b1101 ||
+                    DUT.selected_digit !== DUT.bcd[7:4]) begin
+                    $display("ERROR: tens digit selection");
+                    errors = errors + 1;
+                end
+            end
+
+            2'd2: begin
+                if (an !== 4'b1011 ||
+                    DUT.selected_digit !== DUT.bcd[11:8]) begin
+                    $display("ERROR: hundreds digit selection");
+                    errors = errors + 1;
+                end
+            end
+
+            2'd3: begin
+                if (an !== 4'b0111 ||
+                    DUT.selected_digit !== DUT.bcd[15:12]) begin
+                    $display("ERROR: thousands digit selection");
+                    errors = errors + 1;
+                end
+            end
+
+            default: begin
+                $display("ERROR: unknown digit selection");
+                errors = errors + 1;
+            end
+        endcase
+
+        if (seg !== expected_segments(DUT.selected_digit)) begin
+            $display("ERROR: incorrect segment output");
+            errors = errors + 1;
+        end
+
+        if (dp !== 1'b1) begin
+            $display("ERROR: decimal point should be off");
+            errors = errors + 1;
+        end
+    end
+
+    function [6:0] expected_segments;
+        input [3:0] digit;
+        begin
+            case (digit)
+                4'd0: expected_segments = 7'b1000000;
+                4'd1: expected_segments = 7'b1111001;
+                4'd2: expected_segments = 7'b0100100;
+                4'd3: expected_segments = 7'b0110000;
+                4'd4: expected_segments = 7'b0011001;
+                4'd5: expected_segments = 7'b0010010;
+                4'd6: expected_segments = 7'b0000010;
+                4'd7: expected_segments = 7'b1111000;
+                4'd8: expected_segments = 7'b0000000;
+                4'd9: expected_segments = 7'b0010000;
+                default: expected_segments = 7'b1111111;
+            endcase
+        end
+    endfunction
+
+endmodule
+
+
